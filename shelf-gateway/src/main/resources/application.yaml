@@ -1,0 +1,53 @@
+#gateway模块
+server:
+  port: 8080
+
+spring:
+  application:
+    name: shelf-gateway
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: 6379
+      database: 0
+  cloud:
+    nacos:
+      server-addr: ${NACOS_ADDR:localhost:8848}
+      discovery:
+      # 继承上面的 server-addr
+      config:
+        import-check:
+          enabled: false
+    gateway:
+      routes:
+        - id: shelf-user
+          uri: lb://shelf-user
+          predicates:
+            - Path=/api/auth/**,/api/user/**
+        - id: shelf-donate
+          uri: lb://shelf-donate
+          predicates:
+            - Path=/api/donate/**
+        - id: shelf-borrow
+          uri: lb://shelf-borrow
+          predicates:
+            - Path=/api/borrow/**
+        - id: shelf-admin
+          uri: lb://shelf-admin
+          predicates:
+            - Path=/api/admin/**
+      globalcors:
+        cors-configurations:
+          '[/**]':
+            allowedOrigins: "*"
+            allowedMethods: "*"
+            allowedHeaders: "*"
+
+sa-token:
+  token-name: Authorization
+  timeout: 86400
+  active-timeout: -1
+  is-concurrent: true
+  is-share: false
+  token-style: uuid
+  is-log: false

@@ -1,0 +1,49 @@
+server:
+  port: 8101
+
+spring:
+  application:
+    name: shelf-user
+  cloud:
+    nacos:
+      server-addr: ${NACOS_ADDR:localhost:8848}   # ← 统一写这里，discovery 和 config 共用
+      discovery:
+      # 不用写 server-addr，继承上面的
+      config:
+        import-check:
+          enabled: false
+  datasource:
+    url: ${DB_URL:jdbc:mysql://localhost:3306/shelf?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai}
+    username: ${DB_USERNAME:root}
+    password: ${DB_PASSWORD:your_password}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: 6379
+      database: 0
+  # ============================================
+  # 数据库初始化配置（默认关闭，手动执行更安全）
+  # 如需自动执行，把 mode 改成 always，并确保 MySQL 8.0+
+  # ============================================
+  sql:
+    init:
+      mode: never
+      # schema-locations: classpath:init_safe.sql
+
+sa-token:
+  token-name: Authorization
+  timeout: 86400
+  activity-timeout: -1
+  is-concurrent: true
+  is-share: false
+  token-style: uuid
+  is-log: false
+
+mybatis-plus:
+  configuration:
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+
+feign:
+  sentinel:
+    enabled: true

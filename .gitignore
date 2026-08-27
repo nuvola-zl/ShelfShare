@@ -1,0 +1,48 @@
+# ========== 编译产物 ==========
+target/
+build/
+*.class
+*.jar
+*.war
+*.ear
+
+# ========== IDE ==========
+.idea/
+*.iml
+*.ipr
+*.iws
+.classpath
+.project
+.settings/
+.vscode/
+
+# ========== 系统文件 ==========
+.DS_Store
+Thumbs.db
+*.tmp
+*.bak
+
+# ========== 敏感配置（核心红线） ==========
+application-local.yml
+.env
+.env.*
+
+# 生产环境配置文件
+application-prod.yml
+application-production.yml
+
+# 密钥文件
+*.pem
+*.key
+*.p12
+*.jks
+
+# ========== 日志与本地数据 ==========
+logs/
+*.log
+
+# ========== Maven/Gradle ==========
+.mvn/
+mvnw
+mvnw.cmd
+.gradle/

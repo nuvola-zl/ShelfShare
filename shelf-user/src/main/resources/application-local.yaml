@@ -1,0 +1,11 @@
+spring:
+  cloud:
+    nacos:
+      server-addr: 192.168.153.129:8848
+  datasource:
+    url: jdbc:mysql://localhost:3306/shelf?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai
+    username: root
+    password: 123456
+  data:
+    redis:
+      host: 192.168.153.129
