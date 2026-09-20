@@ -59,7 +59,6 @@ public class DonateInboundConsumer {
             String instanceCode = null;
             BookInstance instance = null;
 
-            // ← 加上这一行
             String month = java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyyMM"));
 
             // 按月份加分布式锁...
@@ -76,42 +75,42 @@ public class DonateInboundConsumer {
                 instance.setIsbn(msg.getIsbn());
                 instance.setStatus("AVAILABLE");
                 instance.setLocation("主书库");
-                instance.setReservedBy(0L);        // ← 补全，数据库 NOT NULL DEFAULT 0
-                instance.setDamagedReason("");     // ← 补全，数据库 NOT NULL DEFAULT ''
+                instance.setReservedBy(0L);
+                instance.setDamagedReason("");
                 bookInstanceMapper.insert(instance);
 
-            // 3. 创建或更新 SKU（已有 SKU 走乐观锁）
-            BookSku sku = bookSkuMapper.selectOne(
-                    new LambdaQueryWrapper<BookSku>().eq(BookSku::getIsbn, msg.getIsbn()));
-            if (sku == null) {
-                sku = new BookSku();
-                sku.setIsbn(msg.getIsbn());
-                sku.setTitle(msg.getTitle());
-                sku.setAuthor(msg.getAuthor());
-                sku.setPublisher(msg.getPublisher());
-                sku.setEdition(msg.getEdition());
-                sku.setCoverImage(msg.getCoverImageUrl());
-                sku.setTotalStock(1);
-                sku.setAvailableStock(1);
-                sku.setVersion(0);
-                bookSkuMapper.insert(sku);
-            } else {
-                int updated = bookSkuMapper.update(null,
-                        new UpdateWrapper<BookSku>()
-                                .eq("id", sku.getId())
-                                .eq("version", sku.getVersion())
-                                .setSql("total_stock = total_stock + 1")
-                                .setSql("available_stock = available_stock + 1")
-                                .setSql("version = version + 1"));
-                if (updated == 0) {
-                    throw new RuntimeException("SKU库存更新冲突，isbn=" + msg.getIsbn());
+                // 3. 创建或更新 SKU（已有 SKU 走乐观锁）
+                BookSku sku = bookSkuMapper.selectOne(
+                        new LambdaQueryWrapper<BookSku>().eq(BookSku::getIsbn, msg.getIsbn()));
+                if (sku == null) {
+                    sku = new BookSku();
+                    sku.setIsbn(msg.getIsbn());
+                    sku.setTitle(msg.getTitle());
+                    sku.setAuthor(msg.getAuthor());
+                    sku.setPublisher(msg.getPublisher());
+                    sku.setEdition(msg.getEdition());
+                    sku.setCoverImage(msg.getCoverImageUrl());
+                    sku.setTotalStock(1);
+                    sku.setAvailableStock(1);
+                    sku.setVersion(0);
+                    bookSkuMapper.insert(sku);
+                } else {
+                    int updated = bookSkuMapper.update(null,
+                            new UpdateWrapper<BookSku>()
+                                    .eq("id", sku.getId())
+                                    .eq("version", sku.getVersion())
+                                    .setSql("total_stock = total_stock + 1")
+                                    .setSql("available_stock = available_stock + 1")
+                                    .setSql("version = version + 1"));
+                    if (updated == 0) {
+                        throw new RuntimeException("SKU库存更新冲突，isbn=" + msg.getIsbn());
+                    }
                 }
-            }
 
-            // 4. 回填捐赠记录
-            record.setInstanceId(instance.getId());
-            record.setStatus("ACCEPTED");
-            donateRecordMapper.updateById(record);
+                // 4. 回填捐赠记录
+                record.setInstanceId(instance.getId());
+                record.setStatus("ACCEPTED");
+                donateRecordMapper.updateById(record);
 
             } finally {
                 lock.unlock();
@@ -122,7 +121,12 @@ public class DonateInboundConsumer {
 
             // 6. 【事务外】Redis 预热（失败不影响主流程）
             try {
-                redisTemplate.opsForValue().increment("stock:" + msg.getIsbn());
+                // 只维护已预热（stock key 存在）的书的 Redis 库存计数：
+                // INCR 对不存在的 key 会创建它，无条件执行会让所有书
+                // 都被 apply() 的 hasKey("stock:"+isbn) 判定为热门路径
+                if (Boolean.TRUE.equals(redisTemplate.hasKey("stock:" + msg.getIsbn()))) {
+                    redisTemplate.opsForValue().increment("stock:" + msg.getIsbn());
+                }
                 redisTemplate.opsForHash().put("book:info:" + msg.getIsbn(), "title", msg.getTitle());
                 redisTemplate.opsForHash().put("book:info:" + msg.getIsbn(), "author", msg.getAuthor());
 

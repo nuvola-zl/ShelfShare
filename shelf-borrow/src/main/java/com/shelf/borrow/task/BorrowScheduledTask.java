@@ -61,18 +61,9 @@ public class BorrowScheduledTask {
 
             for (BorrowRecord record : timeoutList) {
                 try {
-                    // 1. 先释放 donate 的 DB 库存
-                    ReleaseStockRequest req = new ReleaseStockRequest();
-                    req.setInstanceId(record.getInstanceId());
-                    req.setIsbn(record.getIsbn());
-                    Result<Void> releaseResult = donateFeignApi.releaseStock(req);
-                    if (!releaseResult.isSuccess()) {
-                        log.error("超时释放库存失败: recordNo={}, instanceId={}, code={}, msg={}",
-                                record.getRecordNo(), record.getInstanceId(), releaseResult.getCode(), releaseResult.getMsg());
-                        continue; // 释放失败就跳过这条，不改本地状态，下次定时任务再来试
-                    }
-
-                    // 2. 再改本地状态为 CANCELLED（乐观锁，防止并发领取）
+                    // 1. 先条件更新抢占（PENDING_PICKUP → CANCELLED），
+                    //    拿到独占权后再补偿库存，避免"先释放库存、后抢状态"
+                    //    在并发领取时把同一本实体书释放两次（超发）
                     int updated = borrowRecordMapper.update(null,
                             new UpdateWrapper<BorrowRecord>()
                                     .eq("id", record.getId())
@@ -81,6 +72,31 @@ public class BorrowScheduledTask {
                                     .set("cancel_reason", "SYSTEM_TIMEOUT"));
                     if (updated == 0) {
                         log.warn("超时释放状态已被并发修改，跳过: recordNo={}", record.getRecordNo());
+                        continue;
+                    }
+
+                    // 2. 已抢占成功，释放 donate 的 DB 库存
+                    ReleaseStockRequest req = new ReleaseStockRequest();
+                    req.setInstanceId(record.getInstanceId());
+                    req.setIsbn(record.getIsbn());
+                    Result<Void> releaseResult = donateFeignApi.releaseStock(req);
+                    if (!releaseResult.isSuccess()) {
+                        log.error("超时释放库存失败（需人工补偿）: recordNo={}, instanceId={}, code={}, msg={}",
+                                record.getRecordNo(), record.getInstanceId(), releaseResult.getCode(), releaseResult.getMsg());
+                        // 状态已改为 CANCELLED，定时任务不会再扫到，落死信表人工兜底
+                        DeadLetterRecord dlr = new DeadLetterRecord();
+                        dlr.setType("PICKUP_TIMEOUT_RELEASE_FAIL");
+                        dlr.setBizType("BORROW");
+                        dlr.setBizId(record.getRecordNo());
+                        dlr.setUserId(record.getUserId());
+                        dlr.setErrorMsg("超时释放库存失败: " + releaseResult.getMsg());
+                        dlr.setContext(JSON.toJSONString(Map.of(
+                                "compensateType", "RELEASE_STOCK",
+                                "instanceId", record.getInstanceId(),
+                                "isbn", record.getIsbn(),
+                                "recordNo", record.getRecordNo()
+                        )));
+                        deadLetterRecordMapper.insert(dlr);
                         continue;
                     }
 
@@ -114,8 +130,25 @@ public class BorrowScheduledTask {
                     log.info("超时释放成功: recordNo={}", record.getRecordNo());
 
                 } catch (Exception e) {
-                    log.error("超时释放失败（下次定时任务将重试）: recordNo={}, error={}",
+                    log.error("超时释放失败: recordNo={}, error={}",
                             record.getRecordNo(), e.getMessage());
+                    // 状态可能已被置为 CANCELLED 但补偿未执行完，定时任务不会再扫到，
+                    // 落死信表人工兜底
+                    try {
+                        DeadLetterRecord dlr = new DeadLetterRecord();
+                        dlr.setType("PICKUP_TIMEOUT_RELEASE_FAIL");
+                        dlr.setBizType("BORROW");
+                        dlr.setBizId(record.getRecordNo());
+                        dlr.setUserId(record.getUserId());
+                        dlr.setErrorMsg("超时释放异常: " + e.getMessage());
+                        dlr.setContext(JSON.toJSONString(Map.of(
+                                "recordNo", record.getRecordNo(),
+                                "userId", record.getUserId()
+                        )));
+                        deadLetterRecordMapper.insert(dlr);
+                    } catch (Exception ignore) {
+                        // 死信记录写入失败仅记录日志，不影响主异常
+                    }
                 }
             }
         } finally {
